@@ -11,6 +11,7 @@ TOKEN = '8545045230:AAFxaE3jbwWVuiAbMLf-7Pd31nrjXd_4-zk'
 CHANNEL_USERNAME = '@Serianumber99' 
 LIST_MESSAGE_ID = 208 # الرسالة التي تحتوي على القائمة الرئيسية
 ADMIN_IDS = [8147516847, 6661924074, 2041293201] # قائمة الإدارة والمساعدين
+OWNER_ID = 8147516847 # معرفك الشخصي للتحكم في التعديلات
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -27,7 +28,6 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⚠️ اكتب (اليوزر | السيريال) في وصف الصورة.")
         return
 
-    # استخراج اليوزر والسيريال بدقة
     match_input = re.match(r"^(@[\w\d_]+)\s*[|/-]\s*([\w\d_/]+)$", user_input.strip())
     if not match_input:
         await update.message.reply_text("❌ تنسيق خاطئ! استخدم: @Username | Serial")
@@ -39,20 +39,21 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
     status_msg = await update.message.reply_text("🔍 جاري فحص الأرشيف بالكامل، انتظر لحظة...")
 
     found_info = "✅ بيانات جديدة (إضافة لاعب)."
+    is_update = False
     
-    # الفحص التاريخي (من 1 لـ 208)
     for msg_id in range(1, LIST_MESSAGE_ID + 1):
         try:
-            # استخدام forward للقراءة فقط
             old_msg = await context.bot.forward_message(chat_id=update.effective_chat.id, from_chat_id=CHANNEL_USERNAME, message_id=msg_id)
             content = (old_msg.text or old_msg.caption or "").lower()
             
             if new_serial.lower() in content:
                 found_info = f"⚠️ السيريال موجود مسبقاً في الرسالة {msg_id} (عملية تبديل يوزر)"
+                is_update = True
                 await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=old_msg.message_id)
                 break
             elif new_user.lower() in content:
                 found_info = f"⚠️ اليوزر موجود مسبقاً في الرسالة {msg_id} (عملية تعديل سيريال)"
+                is_update = True
                 await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=old_msg.message_id)
                 break
             
@@ -63,7 +64,6 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await status_msg.delete()
 
-    # إرسال طلب المعالجة للمسؤولين
     for admin_id in ADMIN_IDS:
         try:
             keyboard = [[
@@ -72,6 +72,7 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
             ]]
             context.bot_data[f"u_{update.message.chat_id}"] = new_user
             context.bot_data[f"s_{update.message.chat_id}"] = new_serial
+            context.bot_data[f"is_update_{update.message.chat_id}"] = is_update
             
             await context.bot.send_photo(
                 chat_id=admin_id,
@@ -81,54 +82,77 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
         except: continue
 
-    await update.message.reply_text("⏳ تم الفحص الشامل وإرسال التقرير للمسؤولين.")
+    await update.message.reply_text("⏳ تم إرسال طلبك. سيتم التنفيذ بعد موافقة الإدارة.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    action, user_chat_id = query.data.split("_")
+    data = query.data.split("_")
+    action = data[0]
+    user_chat_id = data[1]
     
-    if action == "exec":
-        new_user = context.bot_data.get(f"u_{user_chat_id}")
-        new_serial = context.bot_data.get(f"s_{user_chat_id}")
-        
-        try:
-            temp_msg = await context.bot.forward_message(chat_id=query.message.chat_id, from_chat_id=CHANNEL_USERNAME, message_id=LIST_MESSAGE_ID)
-            lines = temp_msg.text.split('\n')
-            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=temp_msg.message_id)
+    new_user = context.bot_data.get(f"u_{user_chat_id}")
+    new_serial = context.bot_data.get(f"s_{user_chat_id}")
+    is_update = context.bot_data.get(f"is_update_{user_chat_id}")
 
-            updated = False
-            # المرحلة الأولى: البحث عن تطابق لتحديث السطر (تبديل يوزر أو تعديل سيريال)
-            for i, line in enumerate(lines):
-                if new_serial.lower() in line.lower() or new_user.lower() in line.lower():
-                    prefix = re.match(r"(\d+-\s*\[)", line)
-                    if prefix:
-                        lines[i] = f"{prefix.group(1)} {new_user} | {new_serial} ]"
-                        updated = True
-                        break
-            
-            # المرحلة الثانية: إذا لم يوجد تطابق، نبحث عن أول خانة فارغة
-            if not updated:
-                for i, line in enumerate(lines):
-                    if "[ ]" in line or "[  ]" in line:
-                        prefix = re.match(r"(\d+-\s*\[)", line)
-                        if prefix:
-                            lines[i] = f"{prefix.group(1)} {new_user} | {new_serial} ]"
-                            updated = True
-                            break
-            
-            if updated:
-                await context.bot.edit_message_text(chat_id=CHANNEL_USERNAME, message_id=LIST_MESSAGE_ID, text="\n".join(lines))
-                await context.bot.send_message(chat_id=user_chat_id, text="✅ تمت الموافقة وتحديث بياناتك في القناة.")
-                await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ تم التحديث بنجاح.")
+    if action == "exec":
+        # إذا كانت بيانات جديدة، يتم التنفيذ مباشرة
+        if not is_update:
+            await process_list(query, context, user_chat_id, new_user, new_serial)
+        else:
+            # إذا كان تعديل، يتم تحويل الأمر إليك أنت فقط لاختيار نوع التعديل
+            if query.from_user.id == OWNER_ID:
+                keyboard = [
+                    [InlineKeyboardButton("🔄 تعديل يوزر", callback_data=f"edituser_{user_chat_id}")],
+                    [InlineKeyboardButton("🔄 تعديل تسلسلي", callback_data=f"editserial_{user_chat_id}")]
+                ]
+                await query.edit_message_caption(caption=f"{query.message.caption}\n\n⚠️ بيانات موجودة مسبقاً. اذكر نوع التعديل:", reply_markup=InlineKeyboardMarkup(keyboard))
             else:
-                await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ القائمة ممتلئة!")
-        except Exception as e:
-            await query.edit_message_caption(caption=f"❌ خطأ: {e}")
+                await query.edit_message_caption(caption=f"{query.message.caption}\n\n⏳ بانتظار المالك لتحديد نوع التعديل...")
+
+    elif action == "edituser" or action == "editserial":
+        await process_list(query, context, user_chat_id, new_user, new_serial, edit_type=action)
 
     elif action == "reject":
         await context.bot.send_message(chat_id=user_chat_id, text="❌ تم رفض طلبك من قبل الإدارة.")
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ مرفوض.")
+
+async def process_list(query, context, user_chat_id, new_user, new_serial, edit_type=None):
+    try:
+        temp_msg = await context.bot.forward_message(chat_id=query.message.chat_id, from_chat_id=CHANNEL_USERNAME, message_id=LIST_MESSAGE_ID)
+        lines = temp_msg.text.split('\n')
+        await context.bot.delete_message(chat_id=query.message.chat_id, message_id=temp_msg.message_id)
+
+        updated = False
+        # البحث عن السطر المطابق للتعديل
+        for i, line in enumerate(lines):
+            # حالة تعديل يوزر: نبحث عن السيريال ونغير اليوزر
+            if edit_type == "edituser" and new_serial.lower() in line.lower():
+                prefix = re.match(r"(\d+-\s*\[)", line)
+                lines[i] = f"{prefix.group(1)} {new_user} | {new_serial} ]"
+                updated = True
+                break
+            # حالة تعديل تسلسلي: نبحث عن اليوزر ونغير السيريال
+            elif edit_type == "editserial" and new_user.lower() in line.lower():
+                prefix = re.match(r"(\d+-\s*\[)", line)
+                lines[i] = f"{prefix.group(1)} {new_user} | {new_serial} ]"
+                updated = True
+                break
+            # حالة الإضافة الجديدة (لا توجد بيانات مسبقة)
+            elif edit_type is None and ("[ ]" in line or "[  ]" in line):
+                prefix = re.match(r"(\d+-\s*\[)", line)
+                lines[i] = f"{prefix.group(1)} {new_user} | {new_serial} ]"
+                updated = True
+                break
+        
+        if updated:
+            await context.bot.edit_message_text(chat_id=CHANNEL_USERNAME, message_id=LIST_MESSAGE_ID, text="\n".join(lines))
+            await context.bot.send_message(chat_id=user_chat_id, text="✅ تمت الموافقة وتحديث بياناتك بنجاح.")
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ تم التنفيذ بنجاح.")
+        else:
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ لم يتم العثور على الخانة المطلوبة.")
+    except Exception as e:
+        await query.edit_message_caption(caption=f"❌ خطأ: {e}")
 
 def main():
     application = ApplicationBuilder().token(TOKEN).build()
