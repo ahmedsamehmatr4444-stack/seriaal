@@ -109,6 +109,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_list(query, context, user_chat_id, new_user, new_serial, edit_type=None):
     try:
+        # سحب الرسالة وتخزين نصها ثم حذف نسخة البوت
         channel_msg = await context.bot.forward_message(chat_id=query.message.chat_id, from_chat_id=CHANNEL_USERNAME, message_id=LIST_MESSAGE_ID)
         content = channel_msg.text
         await context.bot.delete_message(chat_id=query.message.chat_id, message_id=channel_msg.message_id)
@@ -117,35 +118,42 @@ async def process_list(query, context, user_chat_id, new_user, new_serial, edit_
         updated = False
         
         for i, line in enumerate(lines):
-            # 1. حالة تعديل يوزر (نبحث بالسيريال ونغير اليوزر فقط)
-            if edit_type == "edituser" and new_serial.lower() in line.lower():
-                prefix = re.match(r"(\d+-\s*\[)", line)
-                if prefix:
-                    lines[i] = f"{prefix.group(1)} {new_user} | {new_serial} ]"
-                    updated = True
-                    break
+            # استخراج الرقم في بداية السطر للحفاظ عليه
+            prefix_match = re.match(r"^(\d+)\s*-\s*\[", line)
+            if not prefix_match: continue
             
-            # 2. حالة تعديل سيريال (نبحث باليوزر ونغير السيريال فقط)
+            line_number = prefix_match.group(1)
+
+            # 1. حالة تعديل يوزر (عندنا السيريال، نريد تغيير اليوزر)
+            if edit_type == "edituser" and new_serial.lower() in line.lower():
+                # النتيجة: الرقم - [ اليوزر الجديد | السيريال القديم ]
+                lines[i] = f"{line_number}- [ {new_user} | {new_serial} ]"
+                updated = True
+                break
+            
+            # 2. حالة تعديل سيريال (عندنا اليوزر، نريد تغيير السيريال)
             elif edit_type == "editserial" and new_user.lower() in line.lower():
-                prefix = re.match(r"(\d+-\s*\[)", line)
-                if prefix:
-                    lines[i] = f"{prefix.group(1)} {new_user} | {new_serial} ]"
+                # النتيجة: الرقم - [ اليوزر القديم | السيريال الجديد ]
+                lines[i] = f"{line_number}- [ {new_user} | {new_serial} ]"
+                updated = True
+                break
+
+            # 3. حالة إضافة جديدة (نبحث عن القوسين الفارغين)
+            elif edit_type is None:
+                 # التحقق من أن السطر يحتوي على أقواس فارغة [ ] أو [  ]
+                 if "[ ]" in line or "[  ]" in line:
+                    # النتيجة: الرقم - [ اليوزر الجديد | السيريال الجديد ]
+                    lines[i] = f"{line_number}- [ {new_user} | {new_serial} ]"
                     updated = True
                     break
-
-            # 3. حالة الإضافة الجديدة (نبحث عن خانة فارغة تماماً لضمان عدم المسح)
-            elif edit_type is None:
-                 # التحقق من أن الخانة تحتوي على أقواس ولا تحتوي على الفاصل العمودي | (يعني فارغة)
-                 if "[" in line and "]" in line and "|" not in line:
-                    prefix = re.match(r"(\d+-\s*\[)", line)
-                    if prefix:
-                        lines[i] = f"{prefix.group(1)} {new_user} | {new_serial} ]"
-                        updated = True
-                        break
         
         if updated:
             await context.bot.edit_message_text(chat_id=CHANNEL_USERNAME, message_id=LIST_MESSAGE_ID, text="\n".join(lines))
             await context.bot.send_message(chat_id=user_chat_id, text="✅ تمت العملية بنجاح.")
+        else:
+             # في حالة عدم العثور على مكان للتحديث
+             await context.bot.send_message(chat_id=GROUP_ID, text="❌ فشل التحديث: لم يتم العثور على خانة فارغة أو البيانات المطابقة.")
+
     except Exception as e:
         await context.bot.send_message(chat_id=GROUP_ID, text=f"❌ خطأ: {e}")
 
